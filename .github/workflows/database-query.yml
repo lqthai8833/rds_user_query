@@ -1,0 +1,57 @@
+name: Run Database Query
+
+on:
+  workflow_dispatch:
+    inputs:
+      database_name:
+        type: string
+        description: Database Name
+        required: true
+      sql_query:
+        type: string
+        description: SQL Query to Execute
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  execute_query:
+    runs-on: ubuntu-latest
+    name: Execute Query
+    steps:
+      - name: Write execution summary
+        run: |
+          echo "### Database Query Execution" >> $GITHUB_STEP_SUMMARY
+          echo "- **Database:** ${{ inputs.database_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Query:**" >> $GITHUB_STEP_SUMMARY
+          echo '```sql' >> $GITHUB_STEP_SUMMARY
+          echo "${{ inputs.sql_query }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Execute query via psql
+        run: |
+          set +e
+          RESULT=$(PGPASSWORD="${{ secrets.DB_PASS }}" \
+            psql -h "${{ vars.DB_HOST }}" \
+                 -p "${{ vars.DB_PORT || 5432 }}" \
+                 -U "${{ vars.DB_USER }}" \
+                 -d "${{ inputs.database_name }}" \
+                 -c "${{ inputs.sql_query }}" \
+                 -q 2>&1)
+          PSQL_EXIT=$?
+          set -e
+
+          echo "$RESULT"
+
+          if [ "$PSQL_EXIT" -ne 0 ]; then
+            echo "::error::psql failed with exit code $PSQL_EXIT"
+            exit "$PSQL_EXIT"
+          fi
+
+          echo "Query executed successfully"
