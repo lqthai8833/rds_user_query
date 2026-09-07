@@ -29,10 +29,37 @@ jobs:
           echo "${{ inputs.sql_query }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Install PostgreSQL client
+      - name: Install PostgreSQL client and Session Manager plugin
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client
+          curl -s "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/session-manager-plugin.deb
+          sudo dpkg -i /tmp/session-manager-plugin.deb
+
+      - name: Open SSM tunnel to RDS
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          aws ssm start-session \
+            --target "${{ vars.SSM_TARGET_INSTANCE_ID }}" \
+            --document-name AWS-StartPortForwardingSessionToRemoteHost \
+            --parameters '{"host":["${{ secrets.DB_TUNNEL_HOST }}"],"portNumber":["${{ secrets.DB_TUNNEL_PORT }}"],"localPortNumber":["${{ vars.DB_PORT }}"]}' \
+            > /tmp/ssm-tunnel.log 2>&1 &
+
+          echo "Waiting for tunnel on 127.0.0.1:${{ vars.DB_PORT }}..."
+          for i in $(seq 1 30); do
+            if (exec 3<>"/dev/tcp/127.0.0.1/${{ vars.DB_PORT }}") 2>/dev/null; then
+              echo "Tunnel is up"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::SSM tunnel did not come up in time"
+          cat /tmp/ssm-tunnel.log
+          exit 1
 
       - name: Execute query via psql
         run: |
